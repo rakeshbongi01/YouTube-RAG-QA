@@ -72,7 +72,7 @@ if "retriever" not in st.session_state:
 if "current_video_id" not in st.session_state:
     st.session_state.current_video_id = None
 
-st.markdown('<div class="app-header">YouTube Transcript Intelligence</div>', unsafe_allow_html=True)
+st.markdown('<div class="app-header">YouTube RAG QA</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-subheader">Ground LLM responses strictly in indexed video transcripts via FAISS & LangChain.</div>', unsafe_allow_html=True)
 
 with st.sidebar:

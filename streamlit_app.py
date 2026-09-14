@@ -8,83 +8,124 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
-# Configure the Streamlit page layout
-st.set_page_config(page_title="YouTube RAG QA", layout="wide")
+st.set_page_config(page_title="YouTube RAG Assistant", layout="wide")
+
+# Production-grade minimal styling (No emojis, clean modern palette)
+st.markdown("""
+<style>
+    /* Base typography & header adjustments */
+    h1, h2, h3 {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        letter-spacing: -0.02em;
+        color: #0f172a;
+    }
+    
+    .app-header {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+    
+    .app-subheader {
+        color: #64748b;
+        font-size: 0.95rem;
+        margin-bottom: 2rem;
+    }
+
+    /* Primary button: clean slate/indigo fill */
+    div.stButton > button:first-child {
+        background-color: #0f172a;
+        color: #ffffff;
+        border-radius: 6px;
+        border: 1px solid #0f172a;
+        padding: 0.5rem 1.25rem;
+        font-weight: 500;
+        font-size: 0.9rem;
+        transition: all 0.15s ease-in-out;
+    }
+    
+    div.stButton > button:first-child:hover {
+        background-color: #1e293b;
+        border-color: #1e293b;
+        color: #ffffff;
+    }
+
+    /* Structured response card */
+    .response-box {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-left: 3px solid #2563eb;
+        border-radius: 6px;
+        padding: 1.25rem;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: #1e293b;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 def format_docs(retrieved_docs):
-    """Helper function to format retrieved document chunks into a single string."""
     return "\n\n".join(doc.page_content for doc in retrieved_docs)
 
-# Initialize Session State variables to store data between button clicks
 if "retriever" not in st.session_state:
     st.session_state.retriever = None
 if "current_video_id" not in st.session_state:
     st.session_state.current_video_id = None
 
-st.title("YouTube Transcript Q&A")
+st.markdown('<div class="app-header">YouTube Transcript Intelligence</div>', unsafe_allow_html=True)
+st.markdown('<div class="app-subheader">Ground LLM responses strictly in indexed video transcripts via FAISS & LangChain.</div>', unsafe_allow_html=True)
 
-# Sidebar for secure API key entry
 with st.sidebar:
-    st.header("Configuration")
-    api_key = st.text_input("Enter OpenAI API Key:", type="password")
+    st.markdown("### Authentication")
+    api_key = st.text_input("OpenAI API Key", type="password", help="Key is stored in session memory only.")
     if api_key:
         os.environ["OPENAI_API_KEY"] = api_key
+    st.caption("Ephemeral session. Credentials are discarded on tab close.")
 
-# Use a side-by-side layout: Video on the left, Q&A on the right
 col1, col2 = st.columns([1, 1], gap="large")
 
 with col1:
-    st.subheader("1. Load Video")
-    video_id = st.text_input("Enter YouTube Video ID (e.g., k3O-TL4riQQ):")
+    st.markdown("### Source Video")
+    video_id = st.text_input("Video ID", placeholder="e.g. k3O-TL4riQQ")
     
-    if st.button("Process Video"):
-        if not api_key:
-            st.error("Please enter your OpenAI API key in the sidebar.")
-        elif not video_id:
-            st.warning("Please enter a Video ID.")
-        else:
-            try:
-                with st.spinner("Fetching transcript and building vector index..."):
-                    # Step 1: Ingestion
-                    transcript_list = YouTubeTranscriptApi().fetch(video_id, languages=["en", "hi"]).to_raw_data()
-                    transcript = " ".join(chunk["text"] for chunk in transcript_list)
-
-                    # Step 2: Text Splitting
-                    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-                    chunks = splitter.create_documents([transcript])
-
-                    # Step 3: Embeddings & Vector Store
-                    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-                    vector_store = FAISS.from_documents(chunks, embeddings)
-
-                    # Step 4: Retriever Setup
-                    # Save the retriever to session state so it persists for questions
-                    st.session_state.retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
-                    st.session_state.current_video_id = video_id
-                    
-                    st.success("Video processed successfully!")
-            except TranscriptsDisabled:
-                st.error("No captions available for this video.")
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
-                
-    # Embed the YouTube video automatically if processing was successful
-    if st.session_state.current_video_id:
-        st.video(f"https://www.youtube.com/watch?v={st.session_state.current_video_id}")
+    if video_id:
+        st.video(f"https://www.youtube.com/watch?v={video_id}")
 
 with col2:
-    st.subheader("2. Ask Questions")
-    query = st.text_input("Enter your question:")
+    st.markdown("### Query Pipeline")
+    query = st.text_input("Question", placeholder="Ask anything about the video content...")
     
-    if st.button("Get Answer"):
-        if not st.session_state.retriever:
-            st.warning("Please process a video first.")
+    if st.button("Generate Answer"):
+        if not api_key:
+            st.error("Missing OpenAI API Key in configuration panel.")
+        elif not video_id:
+            st.warning("Please supply a valid YouTube Video ID.")
         elif not query:
-            st.warning("Please enter a question.")
+            st.warning("Query prompt cannot be empty.")
         else:
-            with st.spinner("Analyzing transcript..."):
-                # Step 5: LLM & Prompt Configuration
-                # Note: Corrected model name to standard gpt-4o-mini
+            if st.session_state.current_video_id != video_id:
+                try:
+                    with st.spinner("Ingesting transcript and compiling FAISS index..."):
+                        transcript_list = YouTubeTranscriptApi().fetch(video_id, languages=["en", "hi"]).to_raw_data()
+                        transcript = " ".join(chunk["text"] for chunk in transcript_list)
+
+                        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                        chunks = splitter.create_documents([transcript])
+
+                        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+                        vector_store = FAISS.from_documents(chunks, embeddings)
+
+                        st.session_state.retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+                        st.session_state.current_video_id = video_id
+                        
+                except TranscriptsDisabled:
+                    st.error("Transcripts are disabled or unavailable for this video.")
+                    st.stop()
+                except Exception as e:
+                    st.error(f"Ingestion error: {e}")
+                    st.stop()
+
+            with st.spinner("Retrieving relevant chunks and generating completion..."):
                 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
                 prompt = PromptTemplate(
                     template="""
@@ -98,17 +139,14 @@ with col2:
                     input_variables=['context', 'question']
                 )
 
-                # Step 6: Build the LCEL Chain
                 parallel_chain = RunnableParallel({
                     'context': st.session_state.retriever | RunnableLambda(format_docs),
                     'question': RunnablePassthrough()
                 })
 
-                # Note: The LCEL sequence MUST pipe into the prompt before the LLM
                 main_chain = parallel_chain | prompt | llm | StrOutputParser()
 
-                # Step 7: Execution
                 answer = main_chain.invoke(query)
                 
-                st.markdown("**Answer:**")
-                st.info(answer)
+                st.markdown("### Response")
+                st.markdown(f'<div class="response-box">{answer}</div>', unsafe_allow_html=True)

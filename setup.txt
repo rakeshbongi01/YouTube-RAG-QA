@@ -1,0 +1,4 @@
+git remote set-url origin https://github.com/rakeshbongi01/YouTube-RAG-QA.git
+
+git config --global alias.cmp '!f() { git add . && git commit -m "$1" && git push; }; f'
+git cmp "YouTube-RAG-QA"
